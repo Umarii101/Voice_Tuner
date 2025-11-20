@@ -4,9 +4,11 @@ import numpy as np
 import pyaudio
 import threading
 import queue
+import time
 from scipy import signal
 from collections import deque
 import colorsys
+import sys
 
 class VocalPitchAnalyzer:
     def __init__(self, root):
@@ -45,10 +47,15 @@ class VocalPitchAnalyzer:
         self.indian_note_tolerance = 25  # cents
         self.active_indian_notes = set()
         self.note_hold_counter = {}  # Track how long each note is held
+        # Helper for sargam names and hold behavior
+        self.sargam_names = [n['name'] for n in self.indian_notes]
+        self.last_match_time = {n: 0.0 for n in self.sargam_names}
+        self.note_hold_time = 0.9  # seconds to keep a note highlighted after being hit
         
         # Data storage
         self.freq_history = deque(maxlen=150)
         self.note_history = deque(maxlen=150)
+        self.match_history = deque(maxlen=150)
         self.audio_queue = queue.Queue()
         
         # PyAudio setup
@@ -127,6 +134,16 @@ class VocalPitchAnalyzer:
                                           bg=self.bg_light, fg=self.text_color, 
                                           highlightthickness=0, length=150)
         self.sensitivity_slider.pack(pady=5, padx=20)
+
+        # Sa base control
+        tk.Label(left_panel, text="Base Sa Frequency (Hz)", font=("Arial", 10),
+            fg=self.text_color, bg=self.bg_medium).pack(pady=(12, 0))
+        self.sa_var = tk.DoubleVar(value=self.sa_base)
+        self.sa_entry = tk.Entry(left_panel, textvariable=self.sa_var, width=10)
+        self.sa_entry.pack(pady=5, padx=20)
+        self.apply_sa_btn = tk.Button(left_panel, text="Apply Sa Base", command=self.apply_sa_base,
+                          bg=self.accent2, fg="black", font=("Arial", 10, "bold"))
+        self.apply_sa_btn.pack(pady=5)
         
         # Info panel
         info_frame = tk.Frame(left_panel, bg=self.bg_light, relief=tk.SUNKEN, bd=1)
@@ -173,6 +190,20 @@ class VocalPitchAnalyzer:
         self.cents_label = tk.Label(cents_frame, text="0", font=("Arial", 24, "bold"),
                                     fg=self.text_color, bg=self.bg_light)
         self.cents_label.pack(side=tk.RIGHT, padx=20, pady=10)
+        
+        # Sargam (Indian notes) display
+        sargam_frame = tk.Frame(right_panel, bg=self.bg_dark)
+        sargam_frame.pack(fill=tk.X, padx=10, pady=(5, 0))
+        tk.Label(sargam_frame, text="S A R G A M", font=("Arial", 10, "bold"),
+                 fg=self.accent, bg=self.bg_dark).pack(anchor=tk.W, padx=5)
+        self.sargam_labels = {}
+        notes_frame = tk.Frame(sargam_frame, bg=self.bg_dark)
+        notes_frame.pack(fill=tk.X, padx=5, pady=(4,8))
+        for n in self.indian_notes:
+            lbl = tk.Label(notes_frame, text=f"{n['name']}\n{n['freq']:.2f} Hz", font=("Arial", 10, "bold"),
+                           fg=self.text_color, bg=self.bg_dark, width=12, height=2, relief=tk.FLAT)
+            lbl.pack(side=tk.LEFT, padx=4)
+            self.sargam_labels[n['name']] = lbl
         
         # Graph canvas
         graph_frame = tk.Frame(right_panel, bg=self.bg_dark, relief=tk.SUNKEN, bd=2)
@@ -285,7 +316,26 @@ class VocalPitchAnalyzer:
                             self.cents_label.config(fg="#ff4444")
                         
                         self.status_bar.config(text=f"Analyzing... Note: {note} | Frequency: {freq:.2f} Hz | Cents: {cents:+.1f}")
-                        
+                        # Check Indian note matches and update match history
+                        matched = self.check_indian_notes(freq)
+                        now = time.time()
+                        if matched:
+                            # record last match time for hold behavior
+                            self.last_match_time[matched] = now
+                            self.match_history.append(True)
+                        else:
+                            self.match_history.append(False)
+
+                        # update sargam labels color based on recent matches
+                        for n in self.sargam_names:
+                            lbl = self.sargam_labels.get(n)
+                            if lbl is None:
+                                continue
+                            if now - self.last_match_time.get(n, 0.0) < self.note_hold_time:
+                                lbl.config(fg=self.success)
+                            else:
+                                lbl.config(fg=self.text_color)
+
                         # Update graph
                         self.draw_graph()
         except Exception as e:
@@ -341,14 +391,58 @@ class VocalPitchAnalyzer:
             
             self.canvas.create_line(points, fill=self.accent, width=2, smooth=True)
             
-            # Draw points
-            for i in range(0, len(points), 2):
-                x, y = points[i], points[i+1]
-                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill=self.success, outline=self.accent)
+            # Draw points, color green if matched recently
+            num_pts = len(freqs)
+            for i in range(num_pts):
+                x = width * i / (num_pts - 1)
+                y = height - (height * (freqs[i] - min_freq) / freq_range)
+                matched = False
+                try:
+                    matched = bool(self.match_history[i])
+                except Exception:
+                    matched = False
+                if matched:
+                    fill = self.success
+                    outline = "#88ffcc"
+                else:
+                    fill = "#004c66"
+                    outline = self.accent
+                self.canvas.create_oval(x-3, y-3, x+3, y+3, fill=fill, outline=outline)
         
         # Draw center line
         center_y = height / 2
         self.canvas.create_line(0, center_y, width, center_y, fill="#ff00ff", width=1, dash=(5, 5))
+
+    def apply_sa_base(self):
+        """Apply new Sa base frequency and update displayed sargam frequencies"""
+        try:
+            val = float(self.sa_var.get())
+            if val <= 0:
+                raise ValueError('Sa must be > 0')
+            self.sa_base = val
+            # update indian notes frequencies
+            for n in self.indian_notes:
+                n['freq'] = self.sa_base * n['ratio']
+            # update labels
+            for n in self.indian_notes:
+                lbl = self.sargam_labels.get(n['name'])
+                if lbl:
+                    lbl.config(text=f"{n['name']}\n{n['freq']:.2f} Hz")
+            messagebox.showinfo('Sa Updated', f'Sa base set to {self.sa_base:.2f} Hz')
+        except Exception as e:
+            messagebox.showerror('Invalid value', f'Please enter a valid Sa frequency.\n{e}')
+
+    def check_indian_notes(self, freq: float):
+        """Return the name of an Indian note if freq is within tolerance, else None."""
+        if freq is None or freq <= 0:
+            return None
+        for n in self.indian_notes:
+            target = n['freq']
+            # cents difference
+            cents = 1200 * np.log2(freq / target)
+            if abs(cents) <= self.indian_note_tolerance:
+                return n['name']
+        return None
         
     def calibrate(self):
         """Calibrate the analyzer"""
@@ -462,4 +556,12 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = VocalPitchAnalyzer(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    root.mainloop()
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        # User pressed Ctrl+C in terminal — ensure audio is closed cleanly
+        try:
+            app.on_closing()
+        except Exception:
+            pass
+        sys.exit(0)
