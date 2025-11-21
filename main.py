@@ -668,4 +668,266 @@ class ModernSargamStudio:
                     else:
                         # No clear pitch detected
                         if len(self.freq_history) > 0:
-                            self.freq_history.append(self.freq
+                            self.freq_history.append(self.freq_history[-1] * 0.95)
+                else:
+                    # Very low signal - fade out
+                    if len(self.freq_history) > 0:
+                        self.freq_history.append(self.freq_history[-1] * 0.9)
+                
+                # Update sargam note highlights
+                self.update_sargam_highlights()
+                
+                # Draw graph
+                self.draw_graph()
+                
+        except Exception as e:
+            print(f"Processing error: {e}")
+        
+        if self.running:
+            self.root.after(30, self.process_audio)  # ~33 fps
+    
+    def update_sargam_highlights(self):
+        """Update visual highlights for sargam notes"""
+        current_time = time.time()
+        hold_duration = 0.5  # seconds to keep highlight after hit
+        
+        for note_name, label_dict in self.sargam_labels.items():
+            time_since_hit = current_time - self.note_hit_times.get(note_name, 0)
+            
+            frame = label_dict['frame']
+            name_label = label_dict['name']
+            
+            if time_since_hit < hold_duration:
+                # Active - highlight with note color
+                intensity = 1.0 - (time_since_hit / hold_duration) * 0.5
+                
+                if note_name == self.current_detected_note:
+                    # Currently detecting this note
+                    frame.config(bg=label_dict['color'], relief=tk.RAISED, bd=2)
+                    name_label.config(bg=label_dict['color'], fg='black',
+                                    font=('Segoe UI', 12, 'bold'))
+                else:
+                    # Recently detected, fading
+                    frame.config(bg=self.colors['bg_tertiary'], relief=tk.FLAT)
+                    name_label.config(bg=self.colors['bg_tertiary'], 
+                                    fg=label_dict['color'],
+                                    font=('Segoe UI', 11, 'bold'))
+            else:
+                # Inactive
+                frame.config(bg=self.colors['bg_primary'], relief=tk.FLAT, bd=0)
+                name_label.config(bg=self.colors['bg_primary'],
+                                fg=self.colors['text_primary'],
+                                font=('Segoe UI', 11, 'bold'))
+    
+    def draw_graph(self):
+        """Draw frequency history graph with modern styling"""
+        self.canvas.delete("all")
+        
+        if len(self.freq_history) < 2:
+            return
+        
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        
+        if width < 10 or height < 10:
+            return
+        
+        freqs = list(self.freq_history)
+        
+        # Calculate range with padding
+        min_freq = max(50, min(freqs) - 30)
+        max_freq = min(1000, max(freqs) + 30)
+        freq_range = max_freq - min_freq
+        
+        if freq_range < 10:
+            min_freq -= 5
+            max_freq += 5
+            freq_range = max_freq - min_freq
+        
+        # Draw reference lines for sargam notes
+        for note in self.sargam_notes:
+            note_freq = note['freq']
+            if min_freq <= note_freq <= max_freq:
+                y = height - (height * (note_freq - min_freq) / freq_range)
+                
+                # Draw dotted line
+                self.canvas.create_line(0, y, width, y,
+                                       fill=self.colors['graph_grid'],
+                                       dash=(2, 4), width=1)
+                
+                # Label
+                self.canvas.create_text(width - 5, y - 2,
+                                       text=note['name'],
+                                       anchor=tk.NE,
+                                       fill=note['color'],
+                                       font=('Segoe UI', 8, 'bold'))
+        
+        # Draw grid
+        for i in range(5):
+            y = height * i / 4
+            self.canvas.create_line(0, y, width, y,
+                                   fill=self.colors['graph_grid'],
+                                   width=1)
+        
+        # Draw frequency curve with gradient effect
+        points = []
+        for i, freq in enumerate(freqs):
+            x = width * i / max(1, len(freqs) - 1)
+            y = height - (height * (freq - min_freq) / freq_range)
+            points.extend([x, y])
+        
+        if len(points) >= 4:
+            # Draw shadow/glow
+            for offset in range(3, 0, -1):
+                alpha = offset / 4
+                self.canvas.create_line(points,
+                                       fill=self.colors['accent_primary'],
+                                       width=offset * 3,
+                                       smooth=True,
+                                       capstyle=tk.ROUND,
+                                       joinstyle=tk.ROUND)
+            
+            # Draw main line
+            self.canvas.create_line(points,
+                                   fill=self.colors['accent_secondary'],
+                                   width=2,
+                                   smooth=True,
+                                   capstyle=tk.ROUND)
+            
+            # Draw points - highlight when matching sargam
+            for i, freq in enumerate(freqs):
+                x = width * i / max(1, len(freqs) - 1)
+                y = height - (height * (freq - min_freq) / freq_range)
+                
+                # Check if this frequency matches any sargam
+                match = self.find_closest_sargam(freq)
+                
+                if match:
+                    note_name = match[0]
+                    for note in self.sargam_notes:
+                        if note['name'] == note_name:
+                            color = note['color']
+                            break
+                    else:
+                        color = self.colors['success']
+                    
+                    # Draw larger highlighted point
+                    self.canvas.create_oval(x-4, y-4, x+4, y+4,
+                                           fill=color,
+                                           outline='white',
+                                           width=2)
+                else:
+                    # Draw small inactive point
+                    self.canvas.create_oval(x-2, y-2, x+2, y+2,
+                                           fill=self.colors['bg_tertiary'],
+                                           outline=self.colors['accent_primary'],
+                                           width=1)
+    
+    def start_analysis(self):
+        """Start audio analysis"""
+        try:
+            # List available input devices
+            info = self.p.get_host_api_info_by_index(0)
+            numdevices = info.get('deviceCount')
+            
+            # Find default input device
+            default_input = None
+            for i in range(0, numdevices):
+                device_info = self.p.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels') > 0:
+                    default_input = i
+                    break
+            
+            if default_input is None:
+                raise Exception("No input device found")
+            
+            self.stream = self.p.open(
+                format=self.FORMAT,
+                channels=self.CHANNELS,
+                rate=self.RATE,
+                input=True,
+                input_device_index=default_input,
+                frames_per_buffer=self.CHUNK,
+                stream_callback=None
+            )
+            
+            self.running = True
+            self.start_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.NORMAL)
+            self.status_bar.config(text="🎤 Listening... Start singing!")
+            
+            # Clear buffers
+            self.pitch_buffer.clear()
+            self.confidence_buffer.clear()
+            self.freq_history.clear()
+            self.note_stability_counter.clear()
+            
+            # Start audio thread
+            audio_thread = threading.Thread(target=self.audio_callback, daemon=True)
+            audio_thread.start()
+            
+            # Start processing
+            self.process_audio()
+            
+        except Exception as e:
+            messagebox.showerror("Audio Error", 
+                               f"Could not start audio input:\n{str(e)}\n\n"
+                               "Please check your microphone settings.")
+    
+    def stop_analysis(self):
+        """Stop audio analysis"""
+        self.running = False
+        
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except:
+                pass
+        
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.status_bar.config(text="⏸ Stopped")
+        
+        # Clear display
+        self.note_display_label.config(text="--")
+        self.freq_value_label.config(text="0 Hz")
+        self.cents_value_label.config(text="0")
+    
+    def on_closing(self):
+        """Clean up on exit"""
+        self.running = False
+        
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except:
+                pass
+        
+        try:
+            self.p.terminate()
+        except:
+            pass
+        
+        self.root.destroy()
+
+
+def main():
+    """Main entry point"""
+    root = tk.Tk()
+    app = ModernSargamStudio(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        try:
+            app.on_closing()
+        except:
+            pass
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
