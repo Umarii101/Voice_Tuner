@@ -71,8 +71,4 @@ desktop.ini
 *.err
 
 # --- Old versions ---
-main.py
-mainV2.py
-mainV3.py
-mainV4.py
-
+Old_Versions/
