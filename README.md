@@ -1,4 +1,4 @@
-# 🎤 Vocal Riyaaz — Indian Classical Singing Practice Tool
+# 🎤 Vocal Riyaaz for Indian Classical Singing Practice Tool
 
 A real-time pitch detection and practice application built for Indian classical singers.  
 Hear any sargam note on a synthesised harmonium, sing it back, and get instant visual feedback on your accuracy.
@@ -7,10 +7,10 @@ Hear any sargam note on a synthesised harmonium, sing it back, and get instant v
 
 ## ✨ Features
 
-### 🎹 Sa Setup — Piano Keyboard
+### 🎹 Sa Setup with Piano Keyboard
 - Full chromatic keyboard spanning **C2 to E4** (every practical Sa position)
 - Each key shows its **exact equal-temperament frequency** (A4 = 440 Hz)
-- **Voice range bands** highlighted on the keyboard — teal for male (C3–G3), amber for female (G3–D4)
+- **Voice range bands** highlighted on the keyboard i.e teal for male (C3–G3), amber for female (G3–D4)
 - Click any key to hear it, then confirm it as your Sa
 - Voice-type quick-jump presets (Bass, Baritone, Tenor, Mezzo, Soprano)
 - All 12 sargam notes update automatically the moment you set Sa
@@ -22,26 +22,26 @@ Hear any sargam note on a synthesised harmonium, sing it back, and get instant v
 - Horizontal **pitch meter** shows cents sharp/flat with colour zones
 - **Frequency history graph** with sargam note gridlines as reference
 - Stability percentage shows how steadily you are holding a pitch
-- Raga filter — restrict detection to notes of a chosen raga
+- Raga filter restricts detection to notes of a chosen raga
 
 ### 🎯 Guided Riyaaz
 - Full **HEAR → SING → FEEDBACK** pedagogical loop (how a guru actually teaches)
 - Choose an exercise sequence: Aaroh, Avaroh, Full Saptaka, custom intervals, or random
 - App plays each note → shows countdown → you sing → scored on % of frames on-pitch
-- **Live graph and pitch meter visible throughout** — same feedback as Free Practice
+- **Live graph and pitch meter visible throughout** same feedback as Free Practice
 - Note-by-note results with accuracy bars shown in real time
 - Results saved to Session Stats automatically
 
 ### 📊 Session Stats
 - Bar chart showing accuracy percentage per note across all sessions
-- Average cents deviation table — tells you exactly which notes your voice drifts on
+- Average cents deviation table tells you exactly which notes your voice drifts on
 - Persists across Free Practice and Guided sessions until cleared
 
 ### 🥁 Metronome & Sa Drone
 - Configurable BPM (40–200) with accented downbeat
 - Selectable time signatures: 3, 4, 6, 7, 8 beats per bar
 - Continuous Sa + Pa drone (tanpura / shruti box style) for constant pitch reference
-- Both run independently in background threads — no impact on detection
+- Both run independently in background threads, no impact on detection
 
 ---
 
@@ -97,7 +97,7 @@ pip install pyaudio
 ### Step 1 — Find Your Sa
 Open the app and go to **① Sa Setup**.  
 Click keys on the piano keyboard until you find the note that feels like "home" to your voice.  
-Press **✅ Confirm — This is My Sa**.  
+Press **✅ Confirm This is My Sa**.  
 All 12 sargam notes will tune themselves to your Sa automatically.
 
 > **Tip:** If you own a harmonium, find which physical key you normally call Sa and select it here.
@@ -138,10 +138,10 @@ self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
 | Value | Effect |
 |-------|--------|
 | `0.5` | Quick tap / flick |
-| `1.0` | Short reference — good for fast drills |
-| `1.5` | **Default** — comfortable listen time |
-| `2.5` | Longer hold — good for matching pitch before singing |
-| `4.0` | Sustained tone — meditative / slow riyaaz |
+| `1.0` | Short reference —> good for fast drills |
+| `1.5` | **Default** —> comfortable listen time |
+| `2.5` | Longer hold —> good for matching pitch before singing |
+| `4.0` | Sustained tone —> meditative / slow riyaaz |
 
 ---
 
@@ -151,7 +151,7 @@ self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
 |-----------|----------------|
 | **Pitch detection** | YIN algorithm, FFT-vectorised — runs in the capture thread, never blocks UI |
 | **Threading model** | `_audio_capture` thread → `result_queue` → `_poll_results` on UI thread |
-| **Sa as source of truth** | `get_note_freq(name)` computes Hz from `sa_base` on every call — no cached frequencies |
+| **Sa as source of truth** | `get_note_freq(name)` computes Hz from `sa_base` on every call —> no cached frequencies |
 | **Tone playback** | Additive synthesis (6 harmonics) + ADSR envelope in a daemon thread |
 | **Drone** | Continuous Sa + Pa + octave Sa loop in a daemon thread |
 
@@ -174,18 +174,18 @@ self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
 | Sargam | Semitones from Sa | Western equivalent |
 |--------|------------------|--------------------|
 | Sa     | 0  | Tonic (1st) |
-| Re♭    | 1  | Komal Re — minor 2nd |
-| Re     | 2  | Shuddh Re — major 2nd |
-| Ga♭    | 3  | Komal Ga — minor 3rd |
-| Ga     | 4  | Shuddh Ga — major 3rd |
-| Ma     | 5  | Shuddh Ma — perfect 4th |
-| Ma#    | 6  | Tivra Ma — augmented 4th |
-| Pa     | 7  | Pa — perfect 5th |
-| Dha♭   | 8  | Komal Dha — minor 6th |
-| Dha    | 9  | Shuddh Dha — major 6th |
-| Ni♭    | 10 | Komal Ni — minor 7th |
-| Ni     | 11 | Shuddh Ni — major 7th |
-| Sa'    | 12 | Upper Sa — octave |
+| Re♭    | 1  | Komal Re —> minor 2nd |
+| Re     | 2  | Shuddh Re —> major 2nd |
+| Ga♭    | 3  | Komal Ga —> minor 3rd |
+| Ga     | 4  | Shuddh Ga —> major 3rd |
+| Ma     | 5  | Shuddh Ma —> perfect 4th |
+| Ma#    | 6  | Tivra Ma —> augmented 4th |
+| Pa     | 7  | Pa —> perfect 5th |
+| Dha♭   | 8  | Komal Dha —> minor 6th |
+| Dha    | 9  | Shuddh Dha —> major 6th |
+| Ni♭    | 10 | Komal Ni —> minor 7th |
+| Ni     | 11 | Shuddh Ni —> major 7th |
+| Sa'    | 12 | Upper Sa —> octave |
 
 ---
 
@@ -199,4 +199,4 @@ self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
 
 ## 📄 License
 
-MIT License — feel free to use, modify, and share.
+MIT License feel free to use, modify, and share.
