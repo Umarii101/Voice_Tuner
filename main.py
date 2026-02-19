@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 import numpy as np
@@ -83,6 +82,23 @@ class VocalRiyaaz:
         self.root.configure(bg="#07070f")
         self.root.resizable(True, True)
 
+        # ╔══════════════════════════════════════════════════════════════════╗
+        # ║              USER CONFIGURATION — EDIT HERE                    ║
+        # ╠══════════════════════════════════════════════════════════════════╣
+        # ║                                                                  ║
+        # ║  NOTE_TONE_DURATION  — how long a note plays when you click     ║
+        # ║  a sargam button or the Sa keyboard (in seconds).               ║
+        # ║                                                                  ║
+        # ║  Recommended values:                                             ║
+        # ║    0.5  →  quick tap / flick                                     ║
+        # ║    1.0  →  short reference (good for fast drills)               ║
+        # ║    1.5  →  default — comfortable listen time          ← DEFAULT  ║
+        # ║    2.5  →  longer hold (good for matching pitch)                ║
+        # ║    4.0  →  sustained tone (meditative / slow riyaaz)            ║
+        # ║                                                                  ║
+        # ╚══════════════════════════════════════════════════════════════════╝
+        self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
+
         # ── Audio constants ────────────────────────────────────────────────
         self.CHUNK    = 4096
         self.FORMAT   = pyaudio.paFloat32
@@ -153,7 +169,8 @@ class VocalRiyaaz:
         # ── PyAudio ───────────────────────────────────────────────────────
         self.p           = pyaudio.PyAudio()
         self.stream      = None
-        self.audio_queue = queue.Queue(maxsize=10)
+        self.audio_queue  = queue.Queue(maxsize=10)   # raw audio (unused now, kept for compat)
+        self.result_queue = queue.Queue(maxsize=10)   # processed (freq, match) results
 
         # ── Widget registries ──────────────────────────────────────────────
         self.sargam_btns = {}
@@ -251,7 +268,8 @@ class VocalRiyaaz:
         return (wave * env).astype(np.float32)
 
     def play_note_tone(self, note_name_or_freq):
-        """Accepts note NAME (looked up live) or raw Hz float."""
+        """Accepts note NAME (looked up live) or raw Hz float.
+        Duration is controlled by self.NOTE_TONE_DURATION (see user config block)."""
         if isinstance(note_name_or_freq, str):
             freq = self.get_note_freq(note_name_or_freq)
         else:
@@ -259,9 +277,10 @@ class VocalRiyaaz:
         if freq <= 0 or self.tone_playing:
             return
         self.tone_playing = True
+        duration = self.NOTE_TONE_DURATION   # ← reads from user config
         def _play():
             try:
-                wave = self._harmonium_wave(freq)
+                wave = self._harmonium_wave(freq, duration=duration)
                 out  = self.p.open(format=pyaudio.paFloat32, channels=1,
                                    rate=self.RATE, output=True)
                 out.write(wave.tobytes()); out.stop_stream(); out.close()
@@ -332,38 +351,79 @@ class VocalRiyaaz:
             print(f"Metro err: {e}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    #  YIN PITCH DETECTION
+    #  YIN PITCH DETECTION  — fully vectorized (FFT-based, O(N log N))
+    #
+    #  The previous version used two pure-Python for-loops over ~882 taus,
+    #  each allocating a numpy array.  That took 100–200 ms per frame and
+    #  blocked the Tkinter event loop → UI freeze → apparent crash.
+    #
+    #  This version computes the YIN difference function in three numpy lines
+    #  using FFT autocorrelation.  Typical runtime: < 3 ms for CHUNK=4096.
     # ═══════════════════════════════════════════════════════════════════════
 
     def detect_pitch_yin(self, audio_data):
         N       = len(audio_data)
-        tau_max = min(N//2, int(self.RATE/50))
-        tau_min = max(1,    int(self.RATE/1000))
-        d  = np.zeros(tau_max)
-        for tau in range(1, tau_max):
-            diff = audio_data[:N-tau] - audio_data[tau:N]
-            d[tau] = np.dot(diff, diff)
-        dp = np.ones(tau_max); running = 0.0
-        for tau in range(1, tau_max):
-            running += d[tau]
-            dp[tau]  = d[tau]*tau/running if running > 0 else 1.0
+        tau_max = min(N // 2, int(self.RATE / 50))    # max period → 50 Hz floor
+        tau_min = max(2,       int(self.RATE / 1000)) # min period → 1000 Hz ceiling
+
+        # ── Step 1: FFT-based autocorrelation ─────────────────────────────
+        # Zero-pad to next power-of-2 ≥ 2N to avoid circular wrap-around.
+        fft_size = 1
+        while fft_size < 2 * N:
+            fft_size <<= 1
+        X   = np.fft.rfft(audio_data, n=fft_size)
+        acf = np.fft.irfft(X * np.conj(X))[:N].real
+        # acf[τ] = Σ_{t=0}^{N-τ-1} x[t]·x[t+τ]   (linear, not circular)
+
+        # ── Step 2: Difference function d[τ] (fully vectorized) ───────────
+        sq      = audio_data ** 2
+        sq_sum  = float(np.sum(sq))
+        cum_sq  = np.empty(N + 1)
+        cum_sq[0] = 0.0
+        np.cumsum(sq, out=cum_sq[1:])
+        # d[τ] = Σ(x[t]-x[t+τ])² = Σx[t]² + Σx[t+τ]² - 2·acf[τ]
+        taus  = np.arange(1, tau_max)
+        d_arr = (cum_sq[N - taus]              # Σ x[0..N-τ-1]²
+               + (sq_sum - cum_sq[taus])       # Σ x[τ..N-1]²
+               - 2.0 * acf[taus])
+        d_arr = np.maximum(d_arr, 0.0)         # clip tiny negatives from float noise
+
+        # ── Step 3: CMNDF (cumulative mean normalised difference) ──────────
+        cumsum_d = np.cumsum(d_arr)            # cumsum_d[i] = Σ d[1..i+1]
+        # dp[τ] = d[τ] · τ / Σ_{j=1}^{τ} d[j]
+        dp      = np.ones(tau_max)
+        nonzero = cumsum_d > 0
+        dp[1:]  = np.where(nonzero, d_arr * taus / cumsum_d, 1.0)
+
+        # ── Step 4: Absolute threshold — find first dip below 0.15 ────────
         tau_est = -1
         for tau in range(tau_min, tau_max):
             if dp[tau] < 0.15:
-                while tau+1 < tau_max and dp[tau+1] < dp[tau]: tau += 1
-                tau_est = tau; break
+                # Slide to local minimum
+                while tau + 1 < tau_max and dp[tau + 1] < dp[tau]:
+                    tau += 1
+                tau_est = tau
+                break
+
         if tau_est == -1:
+            # Fallback: global minimum
             tau_est = tau_min + int(np.argmin(dp[tau_min:tau_max]))
-            if dp[tau_est] > 0.5: return 0
-        if 0 < tau_est < tau_max-1:
-            s0,s1,s2 = dp[tau_est-1],dp[tau_est],dp[tau_est+1]
-            tau_f = tau_est + (s2-s0)/(2*(2*s1-s0-s2)+1e-9)
+            if dp[tau_est] > 0.5:
+                return 0.0   # not confident — return silence
+
+        # ── Step 5: Parabolic interpolation for sub-sample accuracy ───────
+        if 0 < tau_est < tau_max - 1:
+            s0, s1, s2 = dp[tau_est - 1], dp[tau_est], dp[tau_est + 1]
+            denom  = 2.0 * (2.0 * s1 - s0 - s2)
+            tau_f  = tau_est + (s2 - s0) / (denom if abs(denom) > 1e-9 else 1e-9)
         else:
             tau_f = float(tau_est)
-        return self.RATE/tau_f if tau_f > 0 else 0
+
+        return float(self.RATE / tau_f) if tau_f > 0 else 0.0
 
     def _smooth(self, freq):
-        if freq > 0: self.freq_buffer.append(freq)
+        if freq > 0:
+            self.freq_buffer.append(freq)
         return float(np.median(list(self.freq_buffer))) if len(self.freq_buffer) >= 3 else freq
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -1257,10 +1317,9 @@ class VocalRiyaaz:
         self.guided_graph.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Right: results list
-        results_outer = tk.Frame(bottom, bg=C['border'], padx=1, pady=1, width=300)
-        results_outer.pack(side=tk.RIGHT, fill=tk.Y)
+        results_outer = tk.Frame(bottom, bg=C['border'], padx=1, pady=1)
+        results_outer.pack(side=tk.RIGHT, fill=tk.Y, width=300)
         results_outer.pack_propagate(False)
-
         results_inner = tk.Frame(results_outer, bg=C['card'])
         results_inner.pack(fill=tk.BOTH, expand=True)
         tk.Label(results_inner, text="NOTE RESULTS",
@@ -1564,70 +1623,122 @@ class VocalRiyaaz:
                                       rate=self.RATE, input=True,
                                       frames_per_buffer=self.CHUNK)
             self.running = True
-            self.start_btn.config(state=tk.DISABLED)
-            self.stop_btn.config(state=tk.NORMAL)
+            # Separate queue for processed results (freq, matched, meter_cents, cents_err)
+            # so the UI thread never blocks on YIN.
+            self.result_queue = queue.Queue(maxsize=10)
+            try:
+                self.start_btn.config(state=tk.DISABLED)
+                self.stop_btn.config(state=tk.NORMAL)
+            except Exception:
+                pass
             self.status_bar.config(text="Listening — sing!")
             threading.Thread(target=self._audio_capture, daemon=True).start()
-            self._process_audio()
+            self._poll_results()          # lightweight UI poller
         except Exception as e:
             messagebox.showerror("Microphone Error", str(e))
 
     def stop_analysis(self):
-        self.running = False; self.guided_active = False; self.guided_listen = False
+        self.running = False
+        self.guided_active = False
+        self.guided_listen = False
         if self.stream:
-            self.stream.stop_stream(); self.stream.close(); self.stream = None
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
         try:
             self.start_btn.config(state=tk.NORMAL)
             self.stop_btn.config(state=tk.DISABLED)
-        except Exception: pass
+        except Exception:
+            pass
         self.status_bar.config(text="Stopped")
 
     def _audio_capture(self):
+        """
+        Runs in a background thread.
+        Reads raw audio → runs YIN → smooths → pushes result dict to result_queue.
+        The UI thread never touches YIN.
+        """
         while self.running:
             try:
+                if self.stream is None:
+                    break
                 raw  = self.stream.read(self.CHUNK, exception_on_overflow=False)
-                data = np.frombuffer(raw, dtype=np.float32)
-                if self.audio_queue.full():
-                    try: self.audio_queue.get_nowait()
+                data = np.frombuffer(raw, dtype=np.float32).copy()
+
+                rms = float(np.sqrt(np.mean(data ** 2)))
+                if rms > self.sensitivity_var.get():
+                    raw_freq = self.detect_pitch_yin(data)    # heavy — lives here
+                    freq     = self._smooth(raw_freq)
+                    if 60 < freq < 1200:
+                        matched, cents_err = self.check_note_match(freq)
+                        meter_cents        = self._cents_from_nearest(freq)
+                        result = dict(freq=freq, matched=matched,
+                                      cents_err=cents_err,
+                                      meter_cents=meter_cents,
+                                      silent=False)
+                    else:
+                        result = dict(silent=True)
+                else:
+                    result = dict(silent=True)
+
+                # Drop oldest if full (prevents lag build-up)
+                if self.result_queue.full():
+                    try: self.result_queue.get_nowait()
                     except queue.Empty: pass
-                self.audio_queue.put(data)
+                self.result_queue.put(result)
+
+            except OSError:
+                # Stream was closed — exit cleanly
+                break
             except Exception as e:
                 print(f"Capture: {e}")
 
-    def _process_audio(self):
-        if not self.running: return
+    def _poll_results(self):
+        """
+        Runs on the Tkinter main thread via root.after.
+        Only does lightweight widget updates — no heavy computation here.
+        """
+        if not self.running:
+            return
         try:
-            if not self.audio_queue.empty():
-                data = self.audio_queue.get()
-                rms  = float(np.sqrt(np.mean(data**2)))
-                if rms > self.sensitivity_var.get():
-                    raw   = self.detect_pitch_yin(data)
-                    freq  = self._smooth(raw)
-                    if 60 < freq < 1200:
-                        self.freq_history.append(freq)
-                        matched, cents_err = self.check_note_match(freq)
-                        meter_cents        = self._cents_from_nearest(freq)
-                        now = time.time()
-                        if matched:
-                            base = matched.rstrip("'₋")
-                            self.note_stats[base]['hits'] += 1
-                            if cents_err is not None:
-                                self.note_stats[base]['cents'].append(float(cents_err))
-                            self.last_match_time[base] = now
+            result = self.result_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(30, self._poll_results)
+            return
 
-                        pg = self.current_page.get()
-                        if pg == 'free':
-                            self._free_update(freq, matched, meter_cents, now)
-                        elif pg == 'guided':
-                            self._guided_voice_update(freq, matched, meter_cents, cents_err)
-                else:
-                    # Silence
-                    if self.current_page.get() == 'free':
-                        self._draw_glow(self.free_glow, '--', 'idle')
-        except Exception as e:
-            print(f"Process: {e}")
-        if self.running:
-            self.root.after(50, self._process_audio)
+        if result.get('silent'):
+            pg = self.current_page.get()
+            if pg == 'free':
+                self._draw_glow(self.free_glow, '--', 'idle')
+            self.root.after(30, self._poll_results)
+            return
+
+        freq        = result['freq']
+        matched     = result['matched']
+        cents_err   = result['cents_err']
+        meter_cents = result['meter_cents']
+        now         = time.time()
+
+        self.freq_history.append(freq)
+
+        # Update session stats
+        if matched:
+            base = matched.rstrip("'₋")
+            self.note_stats[base]['hits'] += 1
+            if cents_err is not None:
+                self.note_stats[base]['cents'].append(float(cents_err))
+            self.last_match_time[base] = now
+
+        pg = self.current_page.get()
+        if pg == 'free':
+            self._free_update(freq, matched, meter_cents, now)
+        elif pg == 'guided':
+            self._guided_voice_update(freq, matched, meter_cents, cents_err)
+
+        self.root.after(30, self._poll_results)
 
     # ── Free practice update ───────────────────────────────────────────────
 
@@ -1689,17 +1800,19 @@ class VocalRiyaaz:
         return list(ex)
 
     def start_guided_session(self):
+        # Auto-start mic if not already running
         if not self.running:
-            try:
-                self.stream = self.p.open(format=self.FORMAT, channels=self.CHANNELS,
-                                          rate=self.RATE, input=True,
-                                          frames_per_buffer=self.CHUNK)
-                self.running = True
-                threading.Thread(target=self._audio_capture, daemon=True).start()
-                self._process_audio()
-            except Exception as e:
-                messagebox.showerror("Mic Error", str(e)); return
+            self.start_analysis()
+            # Give the stream a moment to initialise before starting the exercise
+            self.root.after(300, self._guided_begin)
+        else:
+            self._guided_begin()
 
+    def _guided_begin(self):
+        if not self.running:
+            messagebox.showerror("Mic Error",
+                "Could not start microphone. Check your audio settings.")
+            return
         self.guided_sequence = self._build_exercise_sequence()
         self.guided_step     = 0
         self.guided_results  = []

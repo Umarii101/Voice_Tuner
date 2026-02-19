@@ -1,0 +1,12 @@
+# Vocal Riyaaz — Python 3.12.2
+# Install with: pip install -r requirements.txt
+#
+# PyAudio on Windows (if pip install fails):
+#   pip install pipwin && pipwin install pyaudio
+#
+# PyAudio on macOS:
+#   brew install portaudio && pip install pyaudio
+
+numpy>=2.3.5
+PyAudio>=0.2.14
+scipy>=1.16.3
