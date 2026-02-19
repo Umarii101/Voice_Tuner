@@ -69,3 +69,10 @@ desktop.ini
 # --- Shell scripts logs ---
 *.out
 *.err
+
+# --- Old versions ---
+main.py
+mainV2.py
+mainV3.py
+mainV4.py
+
