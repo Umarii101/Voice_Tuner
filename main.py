@@ -97,7 +97,7 @@ class VocalRiyaaz:
         # ║    4.0  →  sustained tone (meditative / slow riyaaz)            ║
         # ║                                                                  ║
         # ╚══════════════════════════════════════════════════════════════════╝
-        self.NOTE_TONE_DURATION = 1.5   # ← CHANGE THIS NUMBER
+        self.NOTE_TONE_DURATION = 3   # ← CHANGE THIS NUMBER
 
         # ── Audio constants ────────────────────────────────────────────────
         self.CHUNK    = 4096
@@ -1317,8 +1317,8 @@ class VocalRiyaaz:
         self.guided_graph.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Right: results list
-        results_outer = tk.Frame(bottom, bg=C['border'], padx=1, pady=1)
-        results_outer.pack(side=tk.RIGHT, fill=tk.Y, width=300)
+        results_outer = tk.Frame(bottom, bg=C['border'], padx=1, pady=1, width=300)
+        results_outer.pack(side=tk.RIGHT, fill=tk.Y)
         results_outer.pack_propagate(False)
         results_inner = tk.Frame(results_outer, bg=C['card'])
         results_inner.pack(fill=tk.BOTH, expand=True)
